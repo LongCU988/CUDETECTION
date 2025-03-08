@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLOv5 Object Detection - Chulalongkorn University</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.0/dist/ort.min.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            text-align: center; 
+            background-image: url('CU1.jpg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .header { 
+            background-color: #9D2235; /* Chulalongkorn University main color */
+            color: white; 
+            padding: 15px; 
+            margin-bottom: 20px;
+        }
+        h1, h2 { margin: 10px 0; }
+        h2 { color: #9D2235; }
+        .container { 
+            max-width: 800px; 
+            margin: 20px auto; 
+            padding: 20px; 
+            background-color: white; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        .login-container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 30px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            text-align: center;
+            z-index: 10;
+        }
+        #webcamVideo, #canvas { max-width: 640px; margin: 20px auto; display: none; border: 1px solid #ddd; }
+        #stopButton { display: none; background-color: #f44336; }
+        button { 
+            padding: 10px 20px; 
+            margin: 10px; 
+            font-size: 16px; 
+            background-color: #4CAF50; 
+            color: white; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+        }
+        #loginButton {
+            background-color: #9D2235;
+            width: 100px;
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+        #status { margin: 15px; font-weight: bold; padding: 10px; border-radius: 5px; }
+        #log { margin: 15px auto; text-align: left; max-height: 150px; overflow-y: auto; padding: 10px; background-color: #f9f9f9; border: 1px solid #ddd; font-family: monospace; font-size: 12px; }
+        .settings { display: flex; justify-content: center; margin: 10px 0; }
+        .setting-item { margin: 5px 10px; }
+        .password-field {
+            padding: 10px;
+            margin: 10px 0;
+            width: 200px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .login-form {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 20px;
+        }
+        .app-container {
+            display: none;
+            width: 100%;
+            max-width: 900px;
+            z-index: 10;
+        }
+        .logo {
+            width: 150px;
+            margin: 10px auto;
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-container">
+        <img src="CE2.png" alt="" class="logo">
+        <h2>Chulalongkorn University</h2>
+        <h3 style="color: #333; font-weight: normal;">Object Detection System</h3>
+        <div class="login-form">
+            <input type="password" id="passwordField" placeholder="Enter password" class="password-field">
+            <button id="loginButton">Login</button>
+        </div>
+        <p id="loginStatus" style="color: red; display: none;">Incorrect password. Please try again.</p>
+    </div>
+
+    <!-- Main Application (hidden until login) -->
+    <div id="appContainer" class="app-container">
+        <div class="header">
+            <h1>Welcome to Chulalongkorn University Object Detection</h1>
+        </div>
+        
+        <div class="container">
+            <div style="margin-bottom: 20px;">
+                <p>Select a YOLOv5 ONNX model file:</p>
+                <input type="file" id="modelFile" accept=".onnx">
+                <button id="loadButton">Load Model</button>
+            </div>
+            
+            <div id="status" style="background-color: #e3f2fd;">No model loaded</div>
+            
+            <div class="settings">
+                <div class="setting-item">
+                    <label for="confidenceThreshold">Confidence:</label>
+                    <input type="range" id="confidenceThreshold" min="1" max="100" value="25">
+                    <span id="confidenceValue">0.25</span>
+                </div>
+                <div class="setting-item">
+                    <label for="iouThreshold">IoU Threshold:</label>
+                    <input type="range" id="iouThreshold" min="1" max="100" value="45">
+                    <span id="iouValue">0.45</span>
+                </div>
+            </div>
+            
+            <button id="startButton">Start Webcam</button>
+            <button id="stopButton">Stop Webcam</button>
+            
+            <video id="webcamVideo" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+            
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const loginScreen = document.getElementById('loginScreen');
+        const appContainer = document.getElementById('appContainer');
+        const passwordField = document.getElementById('passwordField');
+        const loginButton = document.getElementById('loginButton');
+        const loginStatus = document.getElementById('loginStatus');
+        
+        const status = document.getElementById('status');
+        const log = document.getElementById('log');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const webcamVideo = document.getElementById('webcamVideo');
+        const canvas = document.getElementById('canvas');
+        const loadButton = document.getElementById('loadButton');
+        const confidenceSlider = document.getElementById('confidenceThreshold');
+        const confidenceValue = document.getElementById('confidenceValue');
+        const iouSlider = document.getElementById('iouThreshold');
+        const iouValue = document.getElementById('iouValue');
+        
+        // Login functionality
+        loginButton.addEventListener('click', () => {
+            if (passwordField.value === '123') {
+                loginScreen.style.display = 'none';
+                appContainer.style.display = 'block';
+                logMessage('User logged in successfully');
+            } else {
+                loginStatus.style.display = 'block';
+                passwordField.value = '';
+            }
+        });
+        
+        // Allow login with Enter key
+        passwordField.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') {
+                loginButton.click();
+            }
+        });
+        
+        // Global variables
+        let session = null;
+        let modelLoaded = false;
+        let stream = null;
+        let rafId = null;
+        let confidenceThreshold = 0.25;
+        let iouThreshold = 0.45;
+        
+        // COCO class labels (80 classes)
+        const classLabels = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+            'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog',
+            'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella',
+            'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite',
+            'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle',
+            'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich',
+            'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+            'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote',
+            'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book',
+            'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'];
+        
+        // Set up threshold sliders
+        confidenceSlider.addEventListener('input', function() {
+            confidenceThreshold = this.value / 100;
+            confidenceValue.textContent = confidenceThreshold.toFixed(2);
+        });
+        
+        iouSlider.addEventListener('input', function() {
+            iouThreshold = this.value / 100;
+            iouValue.textContent = iouThreshold.toFixed(2);
+        });
+        
+        // Log messages to the UI
+        function logMessage(message) {
+            const time = new Date().toLocaleTimeString();
+            const line = document.createElement('div');
+            line.textContent = `[${time}] ${message}`;
+            log.appendChild(line);
+            log.scrollTop = log.scrollHeight;
+            console.log(`[${time}] ${message}`);
+        }
+        
+        // Update status display
+        function updateStatus(message, bgColor) {
+            status.textContent = message;
+            status.style.backgroundColor = bgColor;
+        }
+        
+        // Load ONNX model
+        loadButton.addEventListener('click', async () => {
+            const fileInput = document.getElementById('modelFile');
+            
+            if (fileInput.files.length === 0) {
+                updateStatus('Please select a model file', '#ffebee');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            logMessage(`Loading model: ${file.name} (${(file.size / (1024*1024)).toFixed(2)} MB)`);
+            updateStatus(`Loading model...`, '#fff9c4');
+            
+            try {
+                // Read file as ArrayBuffer
+                const arrayBuffer = await file.arrayBuffer();
+                logMessage('File read successfully, initializing ONNX session...');
+                
+                // Create session with WebAssembly execution provider
+                try {
+                    const startTime = performance.now();
+                    
+                    // Create InferenceSession
+                    session = await ort.InferenceSession.create(
+                        new Uint8Array(arrayBuffer),
+                        { executionProviders: ['wasm'] }
+                    );
+                    
+                    const loadTime = (performance.now() - startTime).toFixed(0);
+                    logMessage(`Model loaded successfully in ${loadTime}ms`);
+                    
+                    // Log input/output details
+                    logMessage(`Input names: ${session.inputNames.join(', ')}`);
+                    logMessage(`Output names: ${session.outputNames.join(', ')}`);
+                    
+                    modelLoaded = true;
+                    updateStatus('Model loaded successfully!', '#e8f5e9');
+                } catch (error) {
+                    throw new Error(`ONNX initialization failed: ${error.message}`);
+                }
+            } catch (error) {
+                logMessage(`Error: ${error.message}`);
+                updateStatus(`Error loading model`, '#ffebee');
+            }
+        });
+        
+        // Start webcam
+        startButton.addEventListener('click', async () => {
+            if (!modelLoaded) {
+                updateStatus('Please load a model first', '#ffebee');
+                return;
+            }
+            
+            try {
+                // Request camera access
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }
+                });
+                
+                webcamVideo.srcObject = stream;
+                webcamVideo.style.display = 'block';
+                canvas.style.display = 'block';
+                startButton.style.display = 'none';
+                stopButton.style.display = 'inline-block';
+                
+                // Set initial canvas size
+                canvas.width = 640;
+                canvas.height = 480;
+                
+                logMessage('Webcam started');
+                
+                // Start processing frames
+                webcamVideo.onloadedmetadata = () => {
+                    logMessage(`Camera resolution: ${webcamVideo.videoWidth}×${webcamVideo.videoHeight}`);
+                    processFrames();
+                };
+            } catch (error) {
+                logMessage(`Camera error: ${error.message}`);
+                updateStatus(`Camera error: ${error.message}`, '#ffebee');
+            }
+        });
+        
+        // Stop webcam
+        stopButton.addEventListener('click', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            
+            if (rafId) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+            }
+            
+            webcamVideo.style.display = 'none';
+            canvas.style.display = 'none';
+            stopButton.style.display = 'none';
+            startButton.style.display = 'inline-block';
+            logMessage('Webcam stopped');
+        });
+        
+        // Process video frames
+        async function processFrames() {
+            if (!stream || !modelLoaded) {
+                rafId = requestAnimationFrame(processFrames);
+                return;
+            }
+            
+            const ctx = canvas.getContext('2d');
+            
+            try {
+                // Match canvas size to video
+                if (webcamVideo.videoWidth > 0) {
+                    canvas.width = webcamVideo.videoWidth;
+                    canvas.height = webcamVideo.videoHeight;
+                }
+                
+                // Draw the current video frame
+                ctx.drawImage(webcamVideo, 0, 0, canvas.width, canvas.height);
+                
+                // Preprocess image (following the Python code)
+                const { tensor, scale, padLeft, padTop } = preprocessImage(webcamVideo);
+                
+                // Run inference
+                const startTime = performance.now();
+                const results = await session.run({ 'images': tensor });
+                const inferenceTime = performance.now() - startTime;
+                
+                // Get output
+                const output = results[session.outputNames[0]].data;
+                
+                // Reshape the output to expected format
+                // YOLOv5 typically outputs [1, 25200, 85] for 640x640 input
+                // 25200 = 3 anchor boxes * feature map sizes (80*80 + 40*40 + 20*20)
+                // 85 = 4 box coordinates + 1 objectness score + 80 class scores
+                
+                // First, get output shape
+                const shape = results[session.outputNames[0]].dims;
+                logMessage(`Output shape: ${shape.join('×')}`);
+                
+                // Create a proper view of the output data
+                let detections;
+                if (shape.length === 3) {
+                    // Standard YOLOv5 output [1, boxes, coords+classes]
+                    // Use reshape to create a proper view of the data
+                    const numBoxes = shape[1];
+                    const boxFeatures = shape[2];
+                    
+                    detections = [];
+                    for (let i = 0; i < numBoxes; i++) {
+                        const boxData = [];
+                        for (let j = 0; j < boxFeatures; j++) {
+                            boxData.push(output[i * boxFeatures + j]);
+                        }
+                        detections.push(boxData);
+                    }
+                } else {
+                    logMessage(`Unexpected output shape: ${shape.join('×')}`);
+                    detections = [];
+                }
+                
+                // Process detections
+                const processedDetections = postprocessDetections(detections, scale, padLeft, padTop);
+                
+                // Draw detections
+                drawDetections(ctx, processedDetections, inferenceTime);
+                
+            } catch (error) {
+                logMessage(`Inference error: ${error.message}`);
+            }
+            
+            // Continue processing frames
+            rafId = requestAnimationFrame(processFrames);
+        }
+        
+        // Preprocess image similar to the Python code
+        function preprocessImage(video) {
+            const imgSize = 640; // Standard YOLO input size
+            
+            // Get video dimensions
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+            
+            // Calculate scaling and padding (letterboxing)
+            const scale = imgSize / Math.max(videoHeight, videoWidth);
+            const newWidth = Math.round(videoWidth * scale);
+            const newHeight = Math.round(videoHeight * scale);
+            
+            // Calculate padding
+            const padLeft = Math.floor((imgSize - newWidth) / 2);
+            const padTop = Math.floor((imgSize - newHeight) / 2);
+            
+            // Create a temporary canvas for resizing and padding
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = imgSize;
+            tempCanvas.height = imgSize;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Fill with gray padding color (114, 114, 114) - standard for YOLO
+            tempCtx.fillStyle = 'rgb(114, 114, 114)';
+            tempCtx.fillRect(0, 0, imgSize, imgSize);
+            
+            // Draw the resized image centered with padding
+            tempCtx.drawImage(video, 0, 0, videoWidth, videoHeight, 
+                              padLeft, padTop, newWidth, newHeight);
+            
+            // Get the processed image data
+            const processedData = tempCtx.getImageData(0, 0, imgSize, imgSize);
+            
+            // Convert to tensor format
+            const tensor = new Float32Array(1 * 3 * imgSize * imgSize);
+            
+            // Fill the tensor with normalized values in NCHW format (channel-first)
+            for (let y = 0; y < imgSize; y++) {
+                for (let x = 0; x < imgSize; x++) {
+                    const pixelIndex = (y * imgSize + x) * 4;
+                    
+                    // Normalize to [0, 1]
+                    const r = processedData.data[pixelIndex] / 255.0;
+                    const g = processedData.data[pixelIndex + 1] / 255.0;
+                    const b = processedData.data[pixelIndex + 2] / 255.0;
+                    
+                    // NCHW layout (batch, channel, height, width)
+                    tensor[0 * imgSize * imgSize + y * imgSize + x] = r;
+                    tensor[1 * imgSize * imgSize + y * imgSize + x] = g;
+                    tensor[2 * imgSize * imgSize + y * imgSize + x] = b;
+                }
+            }
+            
+            // Create tensor object for ONNX
+            const tensorObj = new ort.Tensor('float32', tensor, [1, 3, imgSize, imgSize]);
+            
+            return {
+                tensor: tensorObj,
+                scale: scale,
+                padLeft: padLeft,
+                padTop: padTop
+            };
+        }
+        
+        // Post-process detections
+        function postprocessDetections(detections, scale, padLeft, padTop) {
+            const processedDetections = [];
+            
+            for (const detection of detections) {
+                // Check if detection is valid (has at least 6 elements)
+                if (!detection || detection.length < 6) continue;
+                
+                // Get objectness score (confidence)
+                const confidence = detection[4];
+                
+                if (confidence >= confidenceThreshold) {
+                    // Find best class
+                    let bestScore = 0;
+                    let bestClass = -1;
+                    
+                    for (let i = 5; i < detection.length; i++) {
+                        const score = detection[i];
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestClass = i - 5;
+                        }
+                    }
+                    
+                    // Combine object confidence with class confidence
+                    const score = confidence * bestScore;
+                    
+                    if (score >= confidenceThreshold) {
+                        // Get coordinates (YOLOv5 outputs center coordinates normalized to 0-1)
+                        const centerX = detection[0];
+                        const centerY = detection[1];
+                        const width = detection[2];
+                        const height = detection[3];
+                        
+                        // Convert center coordinates to corners and adjust for padding and scaling
+                        // This is the critical part from the Python code
+                        const x = (centerX - padLeft) / scale;
+                        const y = (centerY - padTop) / scale;
+                        const w = width / scale;
+                        const h = height / scale;
+                        
+                        // Store the detection
+                        processedDetections.push({
+                            x: x - w/2, // Convert center to top-left
+                            y: y - h/2,
+                            width: w,
+                            height: h,
+                            class: bestClass,
+                            score: score
+                        });
+                    }
+                }
+            }
+            
+            // Apply non-max suppression
+            return applyNMS(processedDetections, iouThreshold);
+        }
+        
+        // Apply non-maximum suppression to remove overlapping boxes
+        function applyNMS(detections, iouThreshold) {
+            if (detections.length === 0) return [];
+            
+            // Sort by confidence score (descending)
+            detections.sort((a, b) => b.score - a.score);
+            
+            const selected = [];
+            const indices = new Set(detections.map((_, i) => i));
+            
+            while (indices.size > 0) {
+                // Get box with highest score
+                const currentIdx = [...indices][0];
+                selected.push(detections[currentIdx]);
+                indices.delete(currentIdx);
+                
+                // Compare with remaining boxes
+                for (const idx of indices) {
+                    // Calculate IoU
+                    const iou = calculateIoU(detections[currentIdx], detections[idx]);
+                    
+                    // Remove boxes with IoU above threshold
+                    if (iou >= iouThreshold) {
+                        indices.delete(idx);
+                    }
+                }
+            }
+            
+            return selected;
+        }
+        
+        // Calculate Intersection over Union
+        function calculateIoU(box1, box2) {
+            // Calculate intersection
+            const x1 = Math.max(box1.x, box2.x);
+            const y1 = Math.max(box1.y, box2.y);
+            const x2 = Math.min(box1.x + box1.width, box2.x + box2.width);
+            const y2 = Math.min(box1.y + box1.height, box2.y + box2.height);
+            
+            if (x2 < x1 || y2 < y1) return 0;
+            
+            const intersection = (x2 - x1) * (y2 - y1);
+            const box1Area = box1.width * box1.height;
+            const box2Area = box2.width * box2.height;
+            
+            return intersection / (box1Area + box2Area - intersection);
+        }
+        
+        // Draw detections on canvas
+        function drawDetections(ctx, detections, inferenceTime) {
+            const canvas = ctx.canvas;
+            
+            // Clear canvas and redraw video frame
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(webcamVideo, 0, 0, canvas.width, canvas.height);
+            
+            // Draw each detection
+            for (const det of detections) {
+                // Get coordinates
+                const x = Math.max(0, det.x);
+                const y = Math.max(0, det.y);
+                const width = Math.min(canvas.width - x, det.width);
+                const height = Math.min(canvas.height - y, det.height);
+                
+                // Skip invalid boxes
+                if (width <= 0 || height <= 0) continue;
+                
+                // Draw bounding box
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgb(0, 255, 0)';
+                ctx.strokeRect(x, y, width, height);
+                
+                // Format label text
+                const className = det.class >= 0 && det.class < classLabels.length ? 
+                    classLabels[det.class] : `Class ${det.class}`;
+                const text = `${className}: ${(det.score * 100).toFixed(1)}%`;
+                
+                // Draw label background
+                ctx.font = '16px Arial';
+                const textWidth = ctx.measureText(text).width;
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.7)';
+                ctx.fillRect(x, y - 25, textWidth + 10, 25);
+                
+                // Draw label text
+                ctx.fillStyle = 'black';
+                ctx.fillText(text, x + 5, y - 7);
+            }
+            
+            // Draw performance stats
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 10, 220, 60);
+            
+            ctx.font = '16px Arial';
+            ctx.fillStyle = 'white';
+            ctx.fillText(`Detections: ${detections.length}`, 20, 30);
+            ctx.fillText(`Inference: ${inferenceTime.toFixed(1)} ms`, 20, 55);
+        }
+        
+        // Initialize application
+        function init() {
+            // Set initial values
+            confidenceValue.textContent = confidenceThreshold.toFixed(2);
+            iouValue.textContent = iouThreshold.toFixed(2);
+            
+            logMessage('Application initialized. Please log in to access the system.');
+        }
+        
+        // Start the application
+        init();
+    </script>
+</body>
+</html>
